@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPG Live</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --ink: #1c1c1a; --muted: #6b6b66; --line: #e3e3de; --grid: #ececE7;
+    --accent: #1f1f1d; --raw: #2f6fb5; --env: #7a4fb0; --ppg: #c8372d; --ok: #2e8b57; --warn: #b7791f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414; --card: #1c1c1c; --ink: #ececea; --muted: #9a9a94; --line: #2c2c2a; --grid: #262624;
+      --accent: #ececea; --raw: #6ea6e6; --env: #b394e0; --ppg: #ef6a60; --ok: #5cc08a; --warn: #e0a84a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; padding: 16px; gap: 12px;
+  }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 8px 0 0; letter-spacing: .01em; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; min-width: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--ok); } .dot.sim { background: var(--warn); }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  button.rec.active { border-color: var(--ppg); color: var(--ppg); }
+  .chrono { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ppg); display: none; align-items: center; gap: 6px; }
+  .chrono.on { display: inline-flex; }
+  .chrono i { width: 8px; height: 8px; border-radius: 50%; background: var(--ppg); animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .recsum { display: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; font-size: 13px; color: var(--muted); gap: 6px 18px; flex-wrap: wrap; }
+  .recsum.on { display: flex; }
+  .recsum b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  button:disabled { opacity: .45; cursor: default; }
+  .bpm { display: flex; align-items: baseline; gap: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
+  .bpm b { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: right; }
+  .bpm span { color: var(--muted); font-size: 12px; }
+  main { flex: 1; display: grid; grid-template-rows: 1fr 1fr 1.2fr; gap: 12px; min-height: 0; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 4px; display: flex; flex-direction: column; min-height: 0; }
+  section h2 { margin: 0 0 2px 2px; font-size: 12px; font-weight: 500; color: var(--muted); display: flex; gap: 14px; align-items: center; }
+  .key { display: inline-flex; align-items: center; gap: 5px; }
+  .key i { width: 12px; height: 2px; display: inline-block; border-radius: 1px; }
+  .key i.pt { width: 7px; height: 7px; border-radius: 50%; }
+  .wrap { flex: 1; min-height: 0; position: relative; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; color: var(--muted); font-size: 13px; }
+  details summary { cursor: pointer; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; padding: 10px 0 6px; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  input { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; }
+  .note { font-size: 12px; color: var(--muted); padding-bottom: 4px; }
+  @media (max-width: 640px) { body { padding: 10px; } .bpm { border-left: 0; padding-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>PPG Live</h1>
+  <button id="btnConnect" class="primary">Connecter l'ESP32</button>
+  <button id="btnSim">Simulation</button>
+  <button id="btnRec" class="rec" disabled>Enregistrer</button>
+  <span class="chrono" id="chrono"><i></i><span id="chronoT">00:00</span></span>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Non connecté</span></div>
+  <div class="spacer"></div>
+  <div class="bpm"><b id="bpm">--</b><span>BPM</span></div>
+</header>
+<div class="recsum" id="recSum"></div>
+
+<main>
+  <section>
+    <h2>Signal brut <span class="key"><i style="background:var(--raw)"></i>tension (V)</span></h2>
+    <div class="wrap"><canvas id="c1"></canvas></div>
+  </section>
+  <section>
+    <h2>Zoom sur le haut du signal
+      <span class="key"><i style="background:var(--raw);opacity:.45"></i>brut</span>
+      <span class="key"><i style="background:var(--env)"></i>enveloppe haute (V)</span>
+    </h2>
+    <div class="wrap"><canvas id="c2"></canvas></div>
+  </section>
+  <section>
+    <h2>PPG filtré <span class="key"><i style="background:var(--ppg)"></i>signal (mV)</span>
+      <span class="key"><i class="pt" style="background:var(--ppg)"></i>pics systoliques</span>
+    </h2>
+    <div class="wrap"><canvas id="c3"></canvas></div>
+  </section>
+</main>
+
+<details>
+  <summary>Réglages</summary>
+  <div class="fields">
+    <label>UUID du service BLE (celui de ton code Arduino)
+      <input id="inSvc" spellcheck="false" value="4fafc201-1fb5-459e-8fcc-c5c9c331914b"></label>
+    <label>UUID de la caractéristique
+      <input id="inChr" spellcheck="false" value="beb5483e-36e1-4688-b7f5-ea07361b26a8"></label>
+    <label>Diviseur de tension (pont 2×10 kΩ = 2)
+      <input id="inDiv" type="number" step="0.1" value="2"></label>
+    <label>Axe du PPG filtré (± mV)
+      <input id="inYl" type="number" step="5" value="30"></label>
+    <label>Zoom du graphe 2 (mV affichés sous le haut du signal)
+      <input id="inZoom" type="number" min="5" step="10" value="100"></label>
+  </div>
+  <div class="note">Fréquence d'acquisition attendue : 1000 Hz (comme ton script Python). Fréquence réellement reçue : <b id="rate">--</b> Hz.
+  Ferme tout autre programme connecté à l'ESP32 (le script Python) avant de te connecter. À ouvrir dans Chrome ou Edge.</div>
+</details>
+
+<script>
+"use strict";
+/* ---------- Constantes (identiques au script Python) ---------- */
+const FS = 1000, WINDOW_S = 5, N = FS * WINDOW_S;
+const DEVICE_NAME = "ESP32_PPG";
+const PEAK_MIN_PROM = 0.005;           // V
+const PEAK_MIN_DIST = Math.floor(FS * 0.4);
+const COEF = {"cheby": {"1000": {"b": [0.008467080173501807, -0.033825119321602155, 0.04224899876892146, 1.5040555775950194e-17, -0.04224899876892145, 0.03382511932160215, -0.008467080173501807], "a": [1.0, -5.9171925312154, 14.590030041659002, -19.188072055573514, 14.195962317976191, -5.601865973705779, 0.9211382008797719], "zi": [-0.008466481199766292, 0.02535509387892168, -0.01688516584520445, -0.016896658996400922, 0.02536084278109936, -0.008467631911090913]}, "100": {"b": [0.06690890974706411, -0.23543857615189417, 0.2701985233568298, 0.0, -0.2701985233568297, 0.23543857615189426, -0.06690890974706414], "a": [1.0, -5.102282526873097, 10.93552007383503, -12.61320773721519, 8.258456009304181, -2.9074629013431648, 0.42899213667370706], "zi": [-0.06690890973692379, 0.1685296663632318, -0.10166885688270876, -0.10166885701061024, 0.16852966642996253, -0.06690890975141424]}}, "sg": {"31": [-0.041055718475071834, -0.02639296187683193, -0.012741429871574029, -0.00010112245929821151, 0.011527960359995537, 0.022145818586307226, 0.03175245221963685, 0.04034786125998441, 0.04793204570734989, 0.05450500556173333, 0.06006674082313468, 0.06461725149155398, 0.06815653756699121, 0.07068459904944636, 0.07220143593891946, 0.07270704823541049, 0.07220143593891946, 0.07068459904944636, 0.06815653756699121, 0.06461725149155398, 0.060066740823134686, 0.05450500556173332, 0.0479320457073499, 0.04034786125998441, 0.03175245221963685, 0.02214581858630723, 0.01152796035999554, -0.00010112245929820804, -0.012741429871574035, -0.026392961876831916, -0.04105571847507186], "15": [-0.07058823529411806, -0.01176470588235292, 0.038009049773755944, 0.07873303167420861, 0.11040723981900515, 0.13303167420814555, 0.14660633484162977, 0.1511312217194578, 0.14660633484162974, 0.13303167420814552, 0.11040723981900512, 0.07873303167420856, 0.03800904977375587, -0.011764705882352976, -0.07058823529411797]}};
+
+/* ---------- Filtres ---------- */
+function lfilter(b, a, x, zi) {
+  const n = Math.max(b.length, a.length), y = new Float64Array(x.length);
+  const z = new Float64Array(n - 1);
+  for (let k = 0; k < zi.length && k < n - 1; k++) z[k] = zi[k];
+  const bb = new Float64Array(n), aa = new Float64Array(n);
+  for (let k = 0; k < b.length; k++) bb[k] = b[k];
+  for (let k = 0; k < a.length; k++) aa[k] = a[k];
+  for (let i = 0; i < x.length; i++) {
+    const xi = x[i], yi = bb[0] * xi + (n > 1 ? z[0] : 0);
+    for (let k = 0; k < n - 1; k++)
+      z[k] = (k + 1 < n - 1 ? z[k + 1] : 0) + bb[k + 1] * xi - aa[k + 1] * yi;
+    y[i] = yi;
+  }
+  return y;
+}
+function filtfilt(b, a, x, zi) {
+  const L = 3 * Math.max(a.length, b.length), n = x.length;
+  const ext = new Float64Array(n + 2 * L);
+  for (let i = 0; i < L; i++) ext[i] = 2 * x[0] - x[L - i];
+  ext.set(x, L);
+  for (let i = 0; i < L; i++) ext[L + n + i] = 2 * x[n - 1] - x[n - 2 - i];
+  let y = lfilter(b, a, ext, zi.map(v => v * ext[0]));
+  y.reverse();
+  y = lfilter(b, a, y, zi.map(v => v * y[0]));
+  y.reverse();
+  return y.slice(L, L + n);
+}
+function movingAverageFiltfilt(x, win) {
+  const b = new Float64Array(win).fill(1 / win);
+  const zi = new Float64Array(win - 1);
+  for (let k = 0; k < win - 1; k++) zi[k] = (win - 1 - k) / win;
+  return filtfilt(b, [1], x, zi);
+}
+/* Équivalent de pyppg_filter : Chebyshev II passe-bande 0.7-10 Hz + lissage 35 ms */
+function pyppgFilter(x, fs) {
+  const c = COEF.cheby[fs];
+  let y = filtfilt(c.b, c.a, x, c.zi);
+  if (fs >= 75) {
+    const win = Math.round(fs * 35 / 1000);
+    if (win > 1) y = movingAverageFiltfilt(y, win);
+  }
+  return y;
+}
+/* Équivalent de maximum_filter1d(size impair) */
+function maxFilter(x, size) {
+  const h = (size - 1) >> 1, n = x.length, y = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let m = -Infinity;
+    const lo = Math.max(0, i - h), hi = Math.min(n - 1, i + h);
+    for (let j = lo; j <= hi; j++) if (x[j] > m) m = x[j];
+    y[i] = m;
+  }
+  return y;
+}
+/* Équivalent de savgol_filter(x, w, 2) (mode interp) */
+function polyfit2(seg) {
+  const w = seg.length, h = (w - 1) / 2;
+  let s2 = 0, s4 = 0, y0 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < w; i++) {
+    const t = i - h; s2 += t * t; s4 += t ** 4; y0 += seg[i]; y1 += seg[i] * t; y2 += seg[i] * t * t;
+  }
+  const det = w * s4 - s2 * s2;
+  return [(y0 * s4 - s2 * y2) / det, y1 / s2, (w * y2 - s2 * y0) / det];
+}
+function savgol(x, w) {
+  const c = COEF.sg[w], h = (w - 1) >> 1, n = x.length, y = new Float64Array(n);
+  for (let i = h; i < n - h; i++) {
+    let s = 0;
+    for (let k = 0; k < w; k++) s += c[k] * x[i - h + k];
+    y[i] = s;
+  }
+  const l = polyfit2(x.subarray(0, w)), r = polyfit2(x.subarray(n - w));
+  for (let i = 0; i < h; i++) {
+    const t = i - h; y[i] = l[0] + l[1] * t + l[2] * t * t;
+    const u = (w - h + i) - h; y[n - h + i] = r[0] + r[1] * u + r[2] * u * u;
+  }
+  return y;
+}
+/* Équivalent de find_peaks(x, distance=, prominence=) */
+function findPeaks(x, distance, prominence) {
+  const n = x.length, cand = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (x[i] > x[i - 1]) {
+      let j = i;
+      while (j < n - 1 && x[j + 1] === x[j]) j++;
+      if (j < n - 1 && x[j + 1] < x[i]) cand.push((i + j) >> 1);
+      i = j;
+    }
+  }
+  const order = cand.map((_, k) => k).sort((p, q) => x[cand[q]] - x[cand[p]]);
+  const keep = new Array(cand.length).fill(true);
+  for (const k of order) {
+    if (!keep[k]) continue;
+    for (let m = k - 1; m >= 0 && cand[k] - cand[m] < distance; m--) keep[m] = false;
+    for (let m = k + 1; m < cand.length && cand[m] - cand[k] < distance; m++) keep[m] = false;
+  }
+  const out = [];
+  for (let k = 0; k < cand.length; k++) {
+    if (!keep[k]) continue;
+    const p = cand[k], v = x[p];
+    let lm = v, i = p - 1; while (i >= 0 && x[i] <= v) { if (x[i] < lm) lm = x[i]; i--; }
+    let rm = v; i = p + 1; while (i < n && x[i] <= v) { if (x[i] < rm) rm = x[i]; i++; }
+    if (v - Math.max(lm, rm) >= prominence) out.push(p);
+  }
+  return out;
+}
+window.PPG = { pyppgFilter, maxFilter, savgol, findPeaks };
+
+/* ---------- Acquisition ---------- */
+const buf = new Float64Array(N).fill(3.3);
+let divider = 2, dirty = true;
+let recording = false, rec = { raw: [], bpm: [] }, decimCount = 0, recT0 = 0;
+let currentBpm = "";
+let rateCount = 0, rateT0 = performance.now();
+
+function pushVolts(arr) {
+  const k = arr.length;
+  if (k >= N) { buf.set(arr.subarray(k - N)); }
+  else { buf.copyWithin(0, k); buf.set(arr, N - k); }
+  if (recording) for (let i = 0; i < k; i++) {
+    rec.raw.push(arr[i]);
+    rec.bpm.push(currentBpm);
+  }
+  rateCount += k; dirty = true;
+}
+function onBle(ev) {
+  const dv = ev.target.value, k = dv.byteLength >> 1, v = new Float64Array(k);
+  for (let i = 0; i < k; i++) v[i] = dv.getUint16(2 * i, true) / 4095 * 3.3 * divider;
+  pushVolts(v);
+}
+
+/* ---------- Connexion BLE ---------- */
+const $ = id => document.getElementById(id);
+let device = null, chr = null, simTimer = null, mode = "off";
+function setStatus(text, kind) {
+  $("status").textContent = text;
+  $("dot").className = "dot" + (kind ? " " + kind : "");
+}
+async function connect() {
+  if (!navigator.bluetooth) { setStatus("Web Bluetooth indisponible : utilise Chrome ou Edge", ""); return; }
+  stopSim();
+  try {
+    const svc = $("inSvc").value.trim().toLowerCase(), cid = $("inChr").value.trim().toLowerCase();
+    setStatus("Recherche de " + DEVICE_NAME + "…", "");
+    device = await navigator.bluetooth.requestDevice({ filters: [{ name: DEVICE_NAME }], optionalServices: [svc] });
+    device.addEventListener("gattserverdisconnected", () => { mode = "off"; refreshUi(); setStatus("Déconnecté", ""); });
+    setStatus("Connexion…", "");
+    const server = await device.gatt.connect();
+    let service;
+    try { service = await server.getPrimaryService(svc); }
+    catch (e) { throw new Error("Service introuvable : vérifie l'UUID du service dans les réglages (SERVICE_UUID de ton code Arduino)"); }
+    chr = await service.getCharacteristic(cid);
+    chr.addEventListener("characteristicvaluechanged", onBle);
+    await chr.startNotifications();
+    mode = "ble"; refreshUi(); setStatus("Connecté à " + (device.name || DEVICE_NAME), "on");
+  } catch (e) {
+    mode = "off"; refreshUi();
+    setStatus(e.name === "NotFoundError" ? "Aucun appareil choisi" : e.message, "");
+  }
+}
+function disconnect() {
+  if (chr) { try { chr.removeEventListener("characteristicvaluechanged", onBle); } catch (_) {} }
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  stopSim(); mode = "off"; refreshUi(); setStatus("Déconnecté", "");
+}
+
+/* ---------- Simulation (pour tester la page sans l'ESP32) ---------- */
+let simT = 0;
+function startSim() {
+  if (mode === "ble") disconnect();
+  mode = "sim"; buf.fill(3.3); refreshUi(); setStatus("Simulation (72 BPM)", "sim");
+  simTimer = setInterval(() => {
+    const v = new Float64Array(20);
+    for (let i = 0; i < 20; i++, simT += 1 / FS) {
+      const ph = (simT * 1.2) % 1;
+      const pulse = Math.exp(-((ph - 0.18) ** 2) / 0.004) + 0.45 * Math.exp(-((ph - 0.45) ** 2) / 0.01);
+      const high = 3.6 - 0.02 * pulse + 0.003 * (Math.random() - 0.5);
+      const carrier = Math.floor(simT * 500) % 2 === 0;
+      v[i] = carrier ? high : 2.95 + 0.003 * (Math.random() - 0.5);
+    }
+    pushVolts(v);
+  }, 20);
+}
+function stopSim() { if (simTimer) { clearInterval(simTimer); simTimer = null; } }
+
+/* ---------- Enregistrement CSV ---------- */
+function toggleRec() {
+  if (!recording) {
+    recording = true; rec = { raw: [], bpm: [] }; decimCount = 0; recT0 = performance.now();
+    refreshUi(); return;
+  }
+  recording = false; refreshUi();
+  const dur = (performance.now() - recT0) / 1000, pts = rec.raw.length, hz = dur > 0 ? pts / dur : 0;
+  const fmt1 = v => v.toFixed(1).replace(".", ",");
+  $("recSum").innerHTML = `<span>Dernier enregistrement</span><span>Durée : <b>${fmt1(dur)} s</b></span>` +
+    `<span>Points capturés : <b>${pts}</b> (à 100 Hz)</span><span>Fréquence effective : <b>${fmt1(hz)} Hz</b></span>`;
+  $("recSum").classList.add("on");
+  if (rec.raw.length < 30) { setStatus("Enregistrement trop court", ""); return; }
+  const raw = Float64Array.from(rec.raw);
+  const env = savgol(maxFilter(raw, 25), 31);
+  const ppg = pyppgFilter(env, 1000).map(v => -v);
+  const f = (v) => v.toFixed(4).replace(".", ",");
+  const lines = ["Tension_Brute_V;BPM;Enveloppe_superieur;Signal_PPG"];
+  for (let i = 0; i < raw.length; i++) lines.push([f(raw[i]), rec.bpm[i], f(env[i]), f(ppg[i])].join(";"));
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  const name = `enregistrement_ppg_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.csv`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+function updateChrono() {
+  const s = Math.floor((performance.now() - recT0) / 1000), p = n => String(n).padStart(2, "0");
+  $("chronoT").textContent = p(Math.floor(s / 60)) + ":" + p(s % 60);
+}
+function refreshUi() {
+  const live = mode !== "off";
+  $("btnConnect").textContent = mode === "ble" ? "Déconnecter" : "Connecter l'ESP32";
+  $("btnSim").textContent = mode === "sim" ? "Arrêter la simulation" : "Simulation";
+  $("btnRec").disabled = !live;
+  $("btnRec").classList.toggle("active", recording);
+  $("btnRec").textContent = recording ? "Arrêter et télécharger" : "Enregistrer";
+  $("chrono").classList.toggle("on", recording);
+  if (recording) updateChrono();
+}
+$("btnConnect").onclick = () => (mode === "ble" ? disconnect() : connect());
+$("btnSim").onclick = () => (mode === "sim" ? (stopSim(), mode = "off", refreshUi(), setStatus("Non connecté", "")) : startSim());
+$("btnRec").onclick = toggleRec;
+$("inDiv").onchange = () => { divider = parseFloat($("inDiv").value) || 2; save(); };
+["inSvc", "inChr", "inYl", "inZoom"].forEach(id => $(id).onchange = save);
+function save() { try { localStorage.setItem("ppgLive", JSON.stringify({ s: $("inSvc").value, c: $("inChr").value, d: $("inDiv").value, y: $("inYl").value, z: $("inZoom").value })); } catch (_) {} }
+try {
+  const s = JSON.parse(localStorage.getItem("ppgLive") || "null");
+  if (s) { $("inSvc").value = s.s; $("inChr").value = s.c; $("inDiv").value = s.d; $("inYl").value = s.y; if (s.z) $("inZoom").value = s.z; divider = parseFloat(s.d) || 2; }
+} catch (_) {}
+
+/* ---------- Traitement (même enchaînement que le script Python) ---------- */
+let env = new Float64Array(N), ppg = new Float64Array(N), peaks = [];
+let bpmSmooth = null, lastBpmShow = 0;
+function process() {
+  env = savgol(maxFilter(buf, 25), 31);
+  ppg = pyppgFilter(env, FS).map(v => -v);
+  peaks = findPeaks(ppg, PEAK_MIN_DIST, PEAK_MIN_PROM);
+  if (peaks.length >= 2) {
+    let s = 0; for (let i = 1; i < peaks.length; i++) s += peaks[i] - peaks[i - 1];
+    const inst = 60 / (s / (peaks.length - 1) / FS);
+    if (inst >= 40 && inst <= 180) {
+      bpmSmooth = bpmSmooth === null ? inst : 0.85 * bpmSmooth + 0.15 * inst;
+      currentBpm = Math.round(bpmSmooth);
+      const now = performance.now();
+      if (now - lastBpmShow >= 1500) { $("bpm").textContent = currentBpm; lastBpmShow = now; }
+    }
+  }
+}
+
+/* ---------- Tracé ---------- */
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function niceTicks(lo, hi, target) {
+  const span = hi - lo, raw = span / target, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+  const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p, out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-12; v += step) out.push(+v.toFixed(10));
+  return { ticks: out, step };
+}
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const g = cv.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0);
+  return { g, w: r.width, h: r.height };
+}
+function chart(cv, o) {
+  const { g, w, h } = setupCanvas(cv);
+  g.clearRect(0, 0, w, h);
+  const L = 54, R = 8, T = 6, B = 20, pw = w - L - R, ph = h - T - B;
+  const X = t => L + t / WINDOW_S * pw, Y = v => T + (1 - (v - o.lo) / (o.hi - o.lo)) * ph;
+  g.font = "11px system-ui, sans-serif"; g.textBaseline = "middle";
+  const grid = css("--grid"), muted = css("--muted");
+  g.lineWidth = 1;
+  const yt = niceTicks(o.lo, o.hi, Math.max(2, Math.floor(ph / 38)));
+  g.textAlign = "right";
+  for (const v of yt.ticks) {
+    const y = Math.round(Y(v)) + .5;
+    g.strokeStyle = grid; g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke();
+    g.fillStyle = muted; g.fillText(o.fmt(v), L - 6, y);
+  }
+  g.textAlign = "center"; g.textBaseline = "top";
+  for (let t = 0; t <= WINDOW_S; t++) {
+    const x = Math.round(X(t)) + .5;
+    g.strokeStyle = grid; g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
+    g.fillStyle = muted; g.fillText(t + " s", Math.min(Math.max(x, L + 8), L + pw - 8), T + ph + 4);
+  }
+  g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+  for (const s of o.series) {
+    g.strokeStyle = css(s.color); g.lineWidth = s.width; g.globalAlpha = s.alpha || 1; g.lineJoin = "round";
+    g.beginPath();
+    for (let i = 0; i < N; i++) { const x = X(i / FS), y = Y(s.y[i]); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  if (o.points) {
+    g.fillStyle = css(o.points.color);
+    for (const i of o.points.idx) { g.beginPath(); g.arc(X(i / FS), Y(o.points.y[i]), 3.5, 0, 6.2832); g.fill(); }
+  }
+  g.restore();
+}
+function range(arr) { let lo = Infinity, hi = -Infinity; for (const v of arr) { if (v < lo) lo = v; if (v > hi) hi = v; } return [lo, hi]; }
+function draw() {
+  const [vmin, vmax] = range(buf), m = Math.max((vmax - vmin) * 0.1, 0.02);
+  chart($("c1"), { lo: vmin - m, hi: vmax + m, fmt: v => v.toFixed(2), series: [{ y: buf, color: "--raw", width: 1.2 }] });
+  const top = range(env)[1];
+  const zoom = Math.max(5, parseFloat($("inZoom").value) || 100) / 1000;
+  chart($("c2"), { lo: top - zoom, hi: top + zoom / 10, fmt: v => v.toFixed(2),
+    series: [{ y: buf, color: "--raw", width: 1, alpha: .45 }, { y: env, color: "--env", width: 1.8 }] });
+  const yl = (parseFloat($("inYl").value) || 30) / 1000, scaled = ppg.map(v => v * 1000);
+  chart($("c3"), { lo: -yl * 1000, hi: yl * 1000, fmt: v => v.toFixed(0),
+    series: [{ y: scaled, color: "--ppg", width: 1.8 }], points: { idx: peaks, y: scaled, color: "--ppg" } });
+}
+
+let lastProc = 0;
+function loop(t) {
+  if (recording) updateChrono();
+  if (dirty && t - lastProc >= 40) { process(); draw(); dirty = false; lastProc = t; }
+  if (t - rateT0 >= 2000) {
+    $("rate").textContent = mode === "off" ? "--" : Math.round(rateCount / ((t - rateT0) / 1000));
+    rateCount = 0; rateT0 = t;
+  }
+  requestAnimationFrame(loop);
+}
+new ResizeObserver(() => { dirty = true; }).observe(document.body);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { dirty = true; });
+["inYl", "inZoom"].forEach(id => $(id).addEventListener("input", () => { dirty = true; }));
+refreshUi(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
