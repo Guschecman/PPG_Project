@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPG & ECG Live</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --ink: #1c1c1a; --muted: #6b6b66; --line: #e3e3de; --grid: #ecece7;
+    --accent: #1f1f1d; --raw: #2f6fb5; --env: #7a4fb0; --ppg: #c8372d; --ok: #2e8b57; --warn: #b7791f;
+    --ecg-flt: #2e8b57; --ecg-raw: #2f6fb5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414; --card: #1c1c1c; --ink: #ececea; --muted: #9a9a94; --line: #2c2c2a; --grid: #262624;
+      --accent: #ececea; --raw: #6ea6e6; --env: #b394e0; --ppg: #ef6a60; --ok: #5cc08a; --warn: #e0a84a;
+      --ecg-flt: #39ff7a; --ecg-raw: #5aa9ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; padding: 16px; gap: 12px;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+  }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 6px 0 0; letter-spacing: .01em; }
+  .sep { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; min-width: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--ok); }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  button.rec { border-color: var(--ppg); color: var(--ppg); font-weight: 500; }
+  button.rec.active { background: var(--ppg); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+
+  .chrono { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ppg); display: none; align-items: center; gap: 6px; }
+  .chrono.on { display: inline-flex; }
+  .chrono i { width: 8px; height: 8px; border-radius: 50%; background: var(--ppg); animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+
+  .recsum { display: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; font-size: 13px; color: var(--muted); gap: 6px 18px; flex-wrap: wrap; }
+  .recsum.on { display: flex; }
+  .recsum b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .dashboard {
+    flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 680px;
+  }
+  @media (max-width: 1100px) { .dashboard { grid-template-columns: 1fr; } }
+
+  .col {
+    display: flex; flex-direction: column; gap: 12px; min-height: 0;
+  }
+  .topbar {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 14px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .topbar .title { font-weight: 600; font-size: 14px; }
+  .bpm-box { display: flex; align-items: baseline; gap: 6px; }
+  .bpm-box b { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: right; }
+  .bpm-box span { color: var(--muted); font-size: 12px; }
+  .heart { display: inline-block; font-size: 18px; color: var(--ppg); transform: scale(1); transition: transform .08s; margin-right: 4px; }
+  .heart.beat { transform: scale(1.35); }
+
+  section.card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px 6px; display: flex; flex-direction: column; min-height: 170px; flex: 1;
+  }
+  section.card.tall { flex: 1.4; }
+  section.card h2 {
+    margin: 0 0 4px 2px; font-size: 12px; font-weight: 500; color: var(--muted);
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  }
+  .key { display: inline-flex; align-items: center; gap: 5px; }
+  .key i { width: 12px; height: 2px; display: inline-block; border-radius: 1px; }
+  .key i.pt { width: 7px; height: 7px; border-radius: 50%; }
+  .wrap { flex: 1; min-height: 140px; position: relative; }
+  .wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .metrics-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .metrics-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px;
+  }
+  .metric-item {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+  }
+  .metric-item span { display: block; font-size: 11px; color: var(--muted); }
+  .metric-item b { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ecg-note { color: var(--muted); font-size: 12px; margin: 0; }
+
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; color: var(--muted); font-size: 13px; }
+  details summary { cursor: pointer; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding: 10px 0 6px; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  input { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; }
+  .note { font-size: 12px; color: var(--muted); padding-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PPG &amp; ECG Live</h1>
+
+  <!-- Contrôles PPG -->
+  <button id="btnConnectPpg" class="primary">Connecter PPG</button>
+  <div class="status"><span class="dot" id="dotPpg"></span><span id="statusPpg">PPG : Non connecté</span></div>
+
+  <div class="sep"></div>
+
+  <!-- Contrôles ECG -->
+  <button id="btnConnectEcg" class="primary">Connecter ECG</button>
+  <div class="status"><span class="dot" id="dotEcg"></span><span id="statusEcg">ECG : Non connecté</span></div>
+
+  <div class="spacer"></div>
+
+  <!-- Enregistrement CSV Unifié -->
+  <span class="chrono" id="chrono"><i></i><span id="chronoT">00:00</span></span>
+  <button id="btnRec" class="rec" disabled>Enregistrer (CSV unifié)</button>
+</header>
+
+<div class="recsum" id="recSum"></div>
+
+<div class="dashboard">
+  <!-- ================= COLONNE GAUCHE : PPG ================= -->
+  <div class="col">
+    <div class="topbar">
+      <span class="title">PPG en direct</span>
+      <div class="bpm-box"><b id="bpmPpg" style="color:var(--ppg)">--</b><span>BPM</span></div>
+    </div>
+
+    <section class="card">
+      <h2>Signal brut <span class="key"><i style="background:var(--raw)"></i>tension (V)</span></h2>
+      <div class="wrap"><canvas id="c1"></canvas></div>
+    </section>
+
+    <section class="card">
+      <h2>Zoom sur le haut du signal
+        <span class="key"><i style="background:var(--raw);opacity:.45"></i>brut</span>
+        <span class="key"><i style="background:var(--env)"></i>enveloppe haute (V)</span>
+      </h2>
+      <div class="wrap"><canvas id="c2"></canvas></div>
+    </section>
+
+    <section class="card tall">
+      <h2>PPG filtré <span class="key"><i style="background:var(--ppg)"></i>signal (mV)</span>
+        <span class="key"><i class="pt" style="background:var(--ppg)"></i>pics systoliques</span>
+      </h2>
+      <div class="wrap"><canvas id="c3"></canvas></div>
+    </section>
+  </div>
+
+  <!-- ================= COLONNE DROITE : ECG ================= -->
+  <div class="col">
+    <div class="topbar">
+      <span class="title">ECG en direct</span>
+      <div class="bpm-box">
+        <span class="heart" id="heart">&#10084;</span>
+        <b id="bpmEcg" style="color:var(--ecg-flt)">--</b>
+        <span>BPM</span>
+      </div>
+    </div>
+
+    <section class="card tall">
+      <h2>Signal ECG filtré (0,67 – 28 Hz, redressé &amp; lissé)
+        <span class="key"><i style="background:var(--ecg-flt)"></i>signal (mV)</span>
+        <span class="key"><i class="pt" style="background:var(--ppg)"></i>pics R</span>
+      </h2>
+      <div class="wrap"><canvas id="cvF"></canvas></div>
+    </section>
+
+    <section class="card">
+      <h2>Signal ECG brut (sortie LM324N sur GPIO2)
+        <span class="key"><i style="background:var(--ecg-raw)"></i>brut (mV)</span>
+      </h2>
+      <div class="wrap"><canvas id="cvR"></canvas></div>
+    </section>
+
+    <div class="metrics-card">
+      <div class="metrics-grid">
+        <div class="metric-item"><span>Intervalle R-R</span><b id="rr">--</b></div>
+        <div class="metric-item"><span>QRS détectés</span><b id="nq">--</b></div>
+        <div class="metric-item"><span>Amplitude QRS</span><b id="amp">--</b></div>
+        <div class="metric-item"><span>Paquets perdus</span><b id="lost">0</b></div>
+        <div class="metric-item"><span>Cadence reçue</span><b id="rateEcg">--</b></div>
+      </div>
+      <p class="ecg-note" id="msgEcg">Le rythme s'affiche après ~5 s de signal propre.</p>
+    </div>
+  </div>
+</div>
+
+<details>
+  <summary>Réglages PPG &amp; BLE</summary>
+  <div class="fields">
+    <label>UUID du service BLE (celui de ton code Arduino)
+      <input id="inSvc" spellcheck="false" value="4fafc201-1fb5-459e-8fcc-c5c9c331914b"></label>
+    <label>UUID de la caractéristique
+      <input id="inChr" spellcheck="false" value="beb5483e-36e1-4688-b7f5-ea07361b26a8"></label>
+    <label>Diviseur de tension (pont 2×10 kΩ = 2)
+      <input id="inDiv" type="number" step="0.1" value="2"></label>
+    <label>Axe du PPG filtré (± mV)
+      <input id="inYl" type="number" step="5" value="30"></label>
+    <label>Zoom du graphe 2 (mV affichés sous le haut du signal)
+      <input id="inZoom" type="number" min="5" step="10" value="100"></label>
+  </div>
+  <div class="note">Fréquence PPG réellement reçue : <b id="ratePpg">--</b> Hz. À ouvrir dans Chrome ou Edge.</div>
+</details>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let ppgConnected = false;
+let ecgConnected = false;
+let isRecording = false;
+let recT0 = 0;
+let recPpg = { raw: [], bpm: [] }; // Identique à HTMLPPG_OFF : capture directe 1:1 sans altération
+let recEcg = [];                   // Capture directe 1:1 des échantillons ECG (250 Hz)
+
+/* ============================================================================
+   GESTION DE L'ENREGISTREMENT CSV UNIFIÉ (EXACTEMENT COMME HTMLPPG_OFF)
+   ============================================================================ */
+function updateRecButtonState() {
+  const anyLive = ppgConnected || ecgConnected;
+  $("btnRec").disabled = !anyLive && !isRecording;
+  $("btnRec").classList.toggle("active", isRecording);
+  $("btnRec").textContent = isRecording ? "Arrêter et télécharger CSV" : "Enregistrer (CSV unifié)";
+  $("chrono").classList.toggle("on", isRecording);
+  if (isRecording) updateChrono();
+}
+
+function updateChrono() {
+  const s = Math.floor((performance.now() - recT0) / 1000), p = n => String(n).padStart(2, "0");
+  $("chronoT").textContent = p(Math.floor(s / 60)) + ":" + p(s % 60);
+}
+
+function toggleUnifiedRec() {
+  if (!isRecording) {
+    isRecording = true;
+    recPpg = { raw: [], bpm: [] };
+    recEcg = [];
+    recT0 = performance.now();
+    updateRecButtonState();
+    return;
+  }
+
+  isRecording = false;
+  updateRecButtonState();
+
+  const dur = (performance.now() - recT0) / 1000;
+  const ptsPpg = recPpg.raw.length;
+  const hzPpg = dur > 0 ? ptsPpg / dur : 0;
+  const fmt1 = v => v.toFixed(1).replace(".", ",");
+
+  $("recSum").innerHTML =
+    `<span>Dernier enregistrement</span>` +
+    `<span>Durée : <b>${fmt1(dur)} s</b></span>` +
+    `<span>Points PPG capturés : <b>${ptsPpg}</b> (${fmt1(hzPpg)} Hz)</span>` +
+    `<span>Points ECG capturés : <b>${recEcg.length}</b></span>`;
+  $("recSum").classList.add("on");
+
+  if (ptsPpg === 0 && recEcg.length === 0) {
+    alert("Aucune donnée capturée pendant l'enregistrement.");
+    return;
+  }
+
+  // Traitement PPG strictement identique à HTMLPPG_OFF.html
+  let ppgEnv = null, ppgFlt = null;
+  if (ptsPpg >= 30 && window.PPG) {
+    const rawArr = Float64Array.from(recPpg.raw);
+    ppgEnv = window.PPG.savgol(window.PPG.maxFilter(rawArr, 25), 31);
+    ppgFlt = window.PPG.pyppgFilter(ppgEnv, 1000).map(v => -v);
+  }
+
+  const totalRows = Math.max(ptsPpg, recEcg.length * 4);
+  const f4 = v => (v === null || v === undefined || Number.isNaN(v)) ? "" : Number(v).toFixed(4).replace(".", ",");
+  const f2 = v => (v === null || v === undefined || Number.isNaN(v)) ? "" : Number(v).toFixed(2).replace(".", ",");
+
+  const lines = [
+    "Temps_s;Tension_Brute_PPG_V;BPM_PPG;Enveloppe_Superieure_PPG_V;Signal_PPG_V;ECG_Brut_mV;ECG_Filtre_mV;BPM_ECG"
+  ];
+
+  for (let i = 0; i < totalRows; i++) {
+    const t = (i / 1000).toFixed(3).replace(".", ",");
+
+    // PPG : écriture directe 1:1 des échantillons bruts exacts (aucune interpolation)
+    let pRaw = "", pBpm = "", pEnv = "", pFlt = "";
+    if (i < ptsPpg) {
+      pRaw = f4(recPpg.raw[i]);
+      pBpm = recPpg.bpm[i];
+      if (ppgEnv && ppgFlt) {
+        pEnv = f4(ppgEnv[i]);
+        pFlt = f4(ppgFlt[i]);
+      }
+    }
+
+    // ECG : alignement sur la grille 1000 Hz (4 pas de 1 ms par échantillon ECG à 250 Hz)
+    let eRaw = "", eFlt = "", eBpm = "";
+    if (recEcg.length > 0) {
+      const pos = i / 4.0;
+      const idx0 = Math.floor(pos);
+      if (idx0 < recEcg.length) {
+        const idx1 = Math.min(idx0 + 1, recEcg.length - 1);
+        const alpha = pos - idx0;
+        eRaw = f2(recEcg[idx0].raw + (recEcg[idx1].raw - recEcg[idx0].raw) * alpha);
+        eFlt = f2(recEcg[idx0].flt + (recEcg[idx1].flt - recEcg[idx0].flt) * alpha);
+        eBpm = recEcg[idx0].bpm;
+      }
+    }
+
+    lines.push([t, pRaw, pBpm, pEnv, pFlt, eRaw, eFlt, eBpm].join(";"));
+  }
+
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  const name = `enregistrement_ppg_ecg_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.csv`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$("btnRec").addEventListener("click", toggleUnifiedRec);
+
+
+/* ============================================================================
+   MODULE 1 : PPG LIVE (Code d'origine HTMLPPG_OFF.html)
+   ============================================================================ */
+(function initPPG() {
+  const FS = 1000, WINDOW_S = 5, N = FS * WINDOW_S;
+  const DEVICE_NAME = "ESP32_PPG";
+  const PEAK_MIN_PROM = 0.005;
+  const PEAK_MIN_DIST = Math.floor(FS * 0.4);
+  const COEF = {"cheby": {"1000": {"b": [0.008467080173501807, -0.033825119321602155, 0.04224899876892146, 1.5040555775950194e-17, -0.04224899876892145, 0.03382511932160215, -0.008467080173501807], "a": [1.0, -5.9171925312154, 14.590030041659002, -19.188072055573514, 14.195962317976191, -5.601865973705779, 0.9211382008797719], "zi": [-0.008466481199766292, 0.02535509387892168, -0.01688516584520445, -0.016896658996400922, 0.02536084278109936, -0.008467631911090913]}, "100": {"b": [0.06690890974706411, -0.23543857615189417, 0.2701985233568298, 0.0, -0.2701985233568297, 0.23543857615189426, -0.06690890974706414], "a": [1.0, -5.102282526873097, 10.93552007383503, -12.61320773721519, 8.258456009304181, -2.9074629013431648, 0.42899213667370706], "zi": [-0.06690890973692379, 0.1685296663632318, -0.10166885688270876, -0.10166885701061024, 0.16852966642996253, -0.06690890975141424]}}, "sg": {"31": [-0.041055718475071834, -0.02639296187683193, -0.012741429871574029, -0.00010112245929821151, 0.011527960359995537, 0.022145818586307226, 0.03175245221963685, 0.04034786125998441, 0.04793204570734989, 0.05450500556173333, 0.06006674082313468, 0.06461725149155398, 0.06815653756699121, 0.07068459904944636, 0.07220143593891946, 0.07270704823541049, 0.07220143593891946, 0.07068459904944636, 0.06815653756699121, 0.06461725149155398, 0.060066740823134686, 0.05450500556173332, 0.0479320457073499, 0.04034786125998441, 0.03175245221963685, 0.02214581858630723, 0.01152796035999554, -0.00010112245929820804, -0.012741429871574035, -0.026392961876831916, -0.04105571847507186], "15": [-0.07058823529411806, -0.01176470588235292, 0.038009049773755944, 0.07873303167420861, 0.11040723981900515, 0.13303167420814555, 0.14660633484162977, 0.1511312217194578, 0.14660633484162974, 0.13303167420814552, 0.11040723981900512, 0.07873303167420856, 0.03800904977375587, -0.011764705882352976, -0.07058823529411797]}};
+
+  function lfilter(b, a, x, zi) {
+    const n = Math.max(b.length, a.length), y = new Float64Array(x.length);
+    const z = new Float64Array(n - 1);
+    for (let k = 0; k < zi.length && k < n - 1; k++) z[k] = zi[k];
+    const bb = new Float64Array(n), aa = new Float64Array(n);
+    for (let k = 0; k < b.length; k++) bb[k] = b[k];
+    for (let k = 0; k < a.length; k++) aa[k] = a[k];
+    for (let i = 0; i < x.length; i++) {
+      const xi = x[i], yi = bb[0] * xi + (n > 1 ? z[0] : 0);
+      for (let k = 0; k < n - 1; k++)
+        z[k] = (k + 1 < n - 1 ? z[k + 1] : 0) + bb[k + 1] * xi - aa[k + 1] * yi;
+      y[i] = yi;
+    }
+    return y;
+  }
+  function filtfilt(b, a, x, zi) {
+    const L = 3 * Math.max(a.length, b.length), n = x.length;
+    const ext = new Float64Array(n + 2 * L);
+    for (let i = 0; i < L; i++) ext[i] = 2 * x[0] - x[L - i];
+    ext.set(x, L);
+    for (let i = 0; i < L; i++) ext[L + n + i] = 2 * x[n - 1] - x[n - 2 - i];
+    let y = lfilter(b, a, ext, zi.map(v => v * ext[0]));
+    y.reverse();
+    y = lfilter(b, a, y, zi.map(v => v * y[0]));
+    y.reverse();
+    return y.slice(L, L + n);
+  }
+  function movingAverageFiltfilt(x, win) {
+    const b = new Float64Array(win).fill(1 / win);
+    const zi = new Float64Array(win - 1);
+    for (let k = 0; k < win - 1; k++) zi[k] = (win - 1 - k) / win;
+    return filtfilt(b, [1], x, zi);
+  }
+  function pyppgFilter(x, fs) {
+    const c = COEF.cheby[fs];
+    let y = filtfilt(c.b, c.a, x, c.zi);
+    if (fs >= 75) {
+      const win = Math.round(fs * 35 / 1000);
+      if (win > 1) y = movingAverageFiltfilt(y, win);
+    }
+    return y;
+  }
+  function maxFilter(x, size) {
+    const h = (size - 1) >> 1, n = x.length, y = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let m = -Infinity;
+      const lo = Math.max(0, i - h), hi = Math.min(n - 1, i + h);
+      for (let j = lo; j <= hi; j++) if (x[j] > m) m = x[j];
+      y[i] = m;
+    }
+    return y;
+  }
+  function polyfit2(seg) {
+    const w = seg.length, h = (w - 1) / 2;
+    let s2 = 0, s4 = 0, y0 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < w; i++) {
+      const t = i - h; s2 += t * t; s4 += t ** 4; y0 += seg[i]; y1 += seg[i] * t; y2 += seg[i] * t * t;
+    }
+    const det = w * s4 - s2 * s2;
+    return [(y0 * s4 - s2 * y2) / det, y1 / s2, (w * y2 - s2 * y0) / det];
+  }
+  function savgol(x, w) {
+    const c = COEF.sg[w], h = (w - 1) >> 1, n = x.length, y = new Float64Array(n);
+    for (let i = h; i < n - h; i++) {
+      let s = 0;
+      for (let k = 0; k < w; k++) s += c[k] * x[i - h + k];
+      y[i] = s;
+    }
+    const l = polyfit2(x.subarray(0, w)), r = polyfit2(x.subarray(n - w));
+    for (let i = 0; i < h; i++) {
+      const t = i - h; y[i] = l[0] + l[1] * t + l[2] * t * t;
+      const u = (w - h + i) - h; y[n - h + i] = r[0] + r[1] * u + r[2] * u * u;
+    }
+    return y;
+  }
+  function findPeaks(x, distance, prominence) {
+    const n = x.length, cand = [];
+    for (let i = 1; i < n - 1; i++) {
+      if (x[i] > x[i - 1]) {
+        let j = i;
+        while (j < n - 1 && x[j + 1] === x[j]) j++;
+        if (j < n - 1 && x[j + 1] < x[i]) cand.push((i + j) >> 1);
+        i = j;
+      }
+    }
+    const order = cand.map((_, k) => k).sort((p, q) => x[cand[q]] - x[cand[p]]);
+    const keep = new Array(cand.length).fill(true);
+    for (const k of order) {
+      if (!keep[k]) continue;
+      for (let m = k - 1; m >= 0 && cand[k] - cand[m] < distance; m--) keep[m] = false;
+      for (let m = k + 1; m < cand.length && cand[m] - cand[k] < distance; m++) keep[m] = false;
+    }
+    const out = [];
+    for (let k = 0; k < cand.length; k++) {
+      if (!keep[k]) continue;
+      const p = cand[k], v = x[p];
+      let lm = v, i = p - 1; while (i >= 0 && x[i] <= v) { if (x[i] < lm) lm = x[i]; i--; }
+      let rm = v; i = p + 1; while (i < n && x[i] <= v) { if (x[i] < rm) rm = x[i]; i++; }
+      if (v - Math.max(lm, rm) >= prominence) out.push(p);
+    }
+    return out;
+  }
+  window.PPG = { pyppgFilter, maxFilter, savgol, findPeaks };
+
+  const buf = new Float64Array(N).fill(3.3);
+  let divider = 2, dirty = true;
+  let currentBpm = "";
+  let rateCount = 0, rateT0 = performance.now();
+
+  function pushVolts(arr) {
+    const k = arr.length;
+    if (k >= N) { buf.set(arr.subarray(k - N)); }
+    else { buf.copyWithin(0, k); buf.set(arr, N - k); }
+
+    // Capture brute directe 1:1 (exactement comme dans HTMLPPG_OFF.html)
+    if (isRecording) {
+      for (let i = 0; i < k; i++) {
+        recPpg.raw.push(arr[i]);
+        recPpg.bpm.push(currentBpm);
+      }
+    }
+    rateCount += k; dirty = true;
+  }
+
+  function onBle(ev) {
+    const dv = ev.target.value, k = dv.byteLength >> 1, v = new Float64Array(k);
+    for (let i = 0; i < k; i++) v[i] = dv.getUint16(2 * i, true) / 4095 * 3.3 * divider;
+    pushVolts(v);
+  }
+
+  let device = null, chr = null;
+  function setStatus(text, kind) {
+    $("statusPpg").textContent = "PPG : " + text;
+    $("dotPpg").className = "dot" + (kind ? " " + kind : "");
+  }
+
+  async function connect() {
+    if (!navigator.bluetooth) { setStatus("Web Bluetooth indisponible : utilise Chrome ou Edge", ""); return; }
+    try {
+      const svc = $("inSvc").value.trim().toLowerCase(), cid = $("inChr").value.trim().toLowerCase();
+      setStatus("Recherche de " + DEVICE_NAME + "…", "");
+      device = await navigator.bluetooth.requestDevice({ filters: [{ name: DEVICE_NAME }], optionalServices: [svc] });
+      device.addEventListener("gattserverdisconnected", () => { ppgConnected = false; refreshUi(); setStatus("Déconnecté", ""); });
+      setStatus("Connexion…", "");
+      const server = await device.gatt.connect();
+      let service;
+      try { service = await server.getPrimaryService(svc); }
+      catch (e) { throw new Error("Service introuvable : vérifie l'UUID du service dans les réglages"); }
+      chr = await service.getCharacteristic(cid);
+      chr.addEventListener("characteristicvaluechanged", onBle);
+      await chr.startNotifications();
+      ppgConnected = true; refreshUi(); setStatus("Connecté à " + (device.name || DEVICE_NAME), "on");
+    } catch (e) {
+      ppgConnected = false; refreshUi();
+      setStatus(e.name === "NotFoundError" ? "Aucun appareil choisi" : e.message, "");
+    }
+  }
+
+  function disconnect() {
+    if (chr) { try { chr.removeEventListener("characteristicvaluechanged", onBle); } catch (_) {} }
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    ppgConnected = false; refreshUi(); setStatus("Déconnecté", "");
+  }
+
+  function refreshUi() {
+    $("btnConnectPpg").textContent = ppgConnected ? "Déconnecter PPG" : "Connecter PPG";
+    updateRecButtonState();
+  }
+
+  $("btnConnectPpg").addEventListener("click", () => (ppgConnected ? disconnect() : connect()));
+  $("inDiv").addEventListener("change", () => { divider = parseFloat($("inDiv").value) || 2; save(); });
+  ["inSvc", "inChr", "inYl", "inZoom"].forEach(id => $(id).addEventListener("change", save));
+
+  function save() {
+    try { localStorage.setItem("ppgLive", JSON.stringify({ s: $("inSvc").value, c: $("inChr").value, d: $("inDiv").value, y: $("inYl").value, z: $("inZoom").value })); } catch (_) {}
+  }
+  try {
+    const s = JSON.parse(localStorage.getItem("ppgLive") || "null");
+    if (s) { $("inSvc").value = s.s; $("inChr").value = s.c; $("inDiv").value = s.d; $("inYl").value = s.y; if (s.z) $("inZoom").value = s.z; divider = parseFloat(s.d) || 2; }
+  } catch (_) {}
+
+  let env = new Float64Array(N), ppg = new Float64Array(N), peaks = [];
+  let bpmSmooth = null, lastBpmShow = 0;
+
+  function process() {
+    env = savgol(maxFilter(buf, 25), 31);
+    ppg = pyppgFilter(env, FS).map(v => -v);
+    peaks = findPeaks(ppg, PEAK_MIN_DIST, PEAK_MIN_PROM);
+    if (peaks.length >= 2) {
+      let s = 0; for (let i = 1; i < peaks.length; i++) s += peaks[i] - peaks[i - 1];
+      const inst = 60 / (s / (peaks.length - 1) / FS);
+      if (inst >= 40 && inst <= 180) {
+        bpmSmooth = bpmSmooth === null ? inst : 0.85 * bpmSmooth + 0.15 * inst;
+        currentBpm = Math.round(bpmSmooth);
+        const now = performance.now();
+        if (now - lastBpmShow >= 1500) { $("bpmPpg").textContent = currentBpm; lastBpmShow = now; }
+      }
+    }
+  }
+
+  function niceTicks(lo, hi, target) {
+    const span = hi - lo, raw = span / target, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+    const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p, out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-12; v += step) out.push(+v.toFixed(10));
+    return { ticks: out, step };
+  }
+  function setupCanvas(cv) {
+    const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const g = cv.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0);
+    return { g, w: r.width, h: r.height };
+  }
+  function chart(cv, o) {
+    const { g, w, h } = setupCanvas(cv);
+    g.clearRect(0, 0, w, h);
+    const L = 54, R = 8, T = 6, B = 20, pw = w - L - R, ph = h - T - B;
+    const X = t => L + t / WINDOW_S * pw, Y = v => T + (1 - (v - o.lo) / (o.hi - o.lo)) * ph;
+    g.font = "11px system-ui, sans-serif"; g.textBaseline = "middle";
+    const grid = css("--grid"), muted = css("--muted");
+    g.lineWidth = 1;
+    const yt = niceTicks(o.lo, o.hi, Math.max(2, Math.floor(ph / 38)));
+    g.textAlign = "right";
+    for (const v of yt.ticks) {
+      const y = Math.round(Y(v)) + .5;
+      g.strokeStyle = grid; g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke();
+      g.fillStyle = muted; g.fillText(o.fmt(v), L - 6, y);
+    }
+    g.textAlign = "center"; g.textBaseline = "top";
+    for (let t = 0; t <= WINDOW_S; t++) {
+      const x = Math.round(X(t)) + .5;
+      g.strokeStyle = grid; g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
+      g.fillStyle = muted; g.fillText(t + " s", Math.min(Math.max(x, L + 8), L + pw - 8), T + ph + 4);
+    }
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    for (const s of o.series) {
+      g.strokeStyle = css(s.color); g.lineWidth = s.width; g.globalAlpha = s.alpha || 1; g.lineJoin = "round";
+      g.beginPath();
+      for (let i = 0; i < N; i++) { const x = X(i / FS), y = Y(s.y[i]); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    if (o.points) {
+      g.fillStyle = css(o.points.color);
+      for (const i of o.points.idx) { g.beginPath(); g.arc(X(i / FS), Y(o.points.y[i]), 3.5, 0, 6.2832); g.fill(); }
+    }
+    g.restore();
+  }
+  function range(arr) { let lo = Infinity, hi = -Infinity; for (const v of arr) { if (v < lo) lo = v; if (v > hi) hi = v; } return [lo, hi]; }
+  function draw() {
+    const [vmin, vmax] = range(buf), m = Math.max((vmax - vmin) * 0.1, 0.02);
+    chart($("c1"), { lo: vmin - m, hi: vmax + m, fmt: v => v.toFixed(2), series: [{ y: buf, color: "--raw", width: 1.2 }] });
+    const top = range(env)[1];
+    const zoom = Math.max(5, parseFloat($("inZoom").value) || 100) / 1000;
+    chart($("c2"), { lo: top - zoom, hi: top + zoom / 10, fmt: v => v.toFixed(2),
+      series: [{ y: buf, color: "--raw", width: 1, alpha: .45 }, { y: env, color: "--env", width: 1.8 }] });
+    const yl = (parseFloat($("inYl").value) || 30) / 1000, scaled = ppg.map(v => v * 1000);
+    chart($("c3"), { lo: -yl * 1000, hi: yl * 1000, fmt: v => v.toFixed(0),
+      series: [{ y: scaled, color: "--ppg", width: 1.8 }], points: { idx: peaks, y: scaled, color: "--ppg" } });
+  }
+
+  let lastProc = 0;
+  function loop(t) {
+    if (isRecording) updateChrono();
+    if (dirty && t - lastProc >= 40) { process(); draw(); dirty = false; lastProc = t; }
+    if (t - rateT0 >= 2000) {
+      $("ratePpg").textContent = !ppgConnected ? "--" : Math.round(rateCount / ((t - rateT0) / 1000));
+      rateCount = 0; rateT0 = t;
+    }
+    requestAnimationFrame(loop);
+  }
+  new ResizeObserver(() => { dirty = true; }).observe(document.body);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { dirty = true; });
+  ["inYl", "inZoom"].forEach(id => $(id).addEventListener("input", () => { dirty = true; }));
+  refreshUi(); requestAnimationFrame(loop);
+})();
+
+
+/* ============================================================================
+   MODULE 2 : ECG EN DIRECT (Acquisition native 250 Hz -> CSV unifié 1000 Hz)
+   ============================================================================ */
+(function initECG() {
+  const FS = 250;
+
+  class Biquad {
+    constructor(b0, b1, b2, a0, a1, a2) {
+      this.b0 = b0 / a0; this.b1 = b1 / a0; this.b2 = b2 / a0;
+      this.a1 = a1 / a0; this.a2 = a2 / a0;
+      this.z1 = 0; this.z2 = 0;
+    }
+    process(x) {
+      const y = this.b0 * x + this.z1;
+      this.z1 = this.b1 * x - this.a1 * y + this.z2;
+      this.z2 = this.b2 * x - this.a2 * y;
+      return y;
+    }
+    prime(x) {
+      const g = (this.b0 + this.b1 + this.b2) / (1 + this.a1 + this.a2);
+      const y = g * x;
+      this.z2 = this.b2 * x - this.a2 * y;
+      this.z1 = this.b1 * x - this.a1 * y + this.z2;
+      return y;
+    }
+  }
+
+  function notch(f0, Q, fs) {
+    const w = 2 * Math.PI * f0 / fs, c = Math.cos(w), al = Math.sin(w) / (2 * Q);
+    return new Biquad(1, -2 * c, 1, 1 + al, -2 * c, 1 - al);
+  }
+  function lowpass(f0, fs, Q = Math.SQRT1_2) {
+    const w = 2 * Math.PI * f0 / fs, c = Math.cos(w), al = Math.sin(w) / (2 * Q);
+    return new Biquad((1 - c) / 2, 1 - c, (1 - c) / 2, 1 + al, -2 * c, 1 - al);
+  }
+  function highpass(f0, fs, Q = Math.SQRT1_2) {
+    const w = 2 * Math.PI * f0 / fs, c = Math.cos(w), al = Math.sin(w) / (2 * Q);
+    return new Biquad((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + al, -2 * c, 1 - al);
+  }
+
+  class ECGFilter {
+    constructor(fs = FS) {
+      this.n50 = notch(50, 35, fs);
+      this.n100 = notch(100, 35, fs);
+      this.hp = highpass(0.67, fs);
+      this.lp1 = lowpass(28, fs);
+      this.lp2 = lowpass(28, fs);
+      this.ready = false;
+    }
+    process(x) {
+      if (!this.ready) {
+        let v = x;
+        v = this.n50.prime(v); v = this.n100.prime(v);
+        v = this.hp.prime(v);  v = this.lp1.prime(v); v = this.lp2.prime(v);
+        this.ready = true;
+      }
+      let v = x;
+      v = this.n50.process(v); v = this.n100.process(v);
+      v = this.hp.process(v);  v = this.lp1.process(v); v = this.lp2.process(v);
+      return v;
+    }
+  }
+
+  function median(a) {
+    const b = Array.from(a).sort((p, q) => p - q), n = b.length;
+    return n ? (n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2) : NaN;
+  }
+
+  function detectBeats(y, fs = FS) {
+    const n = y.length, edge = Math.round(0.15 * fs);
+    const absY = new Float32Array(n);
+    for (let i = 0; i < n; i++) absY[i] = Math.abs(y[i]);
+    const sigma = 1.4826 * median(absY);
+    const thr = 3.8 * sigma;
+    const peaks = [];
+    let i = edge;
+    while (i < n - edge) {
+      if (absY[i] > thr) {
+        let best = i, end = Math.min(n - edge, i + Math.round(0.15 * fs));
+        for (let j = i; j < end; j++) if (absY[j] > absY[best]) best = j;
+        peaks.push(best);
+        i = best + Math.round(0.4 * fs);
+      } else i++;
+    }
+    if (peaks.length < 4) return { bpm: null, peaks, sigma };
+    const rr = [];
+    for (let k = 1; k < peaks.length; k++) rr.push((peaks[k] - peaks[k - 1]) / fs);
+    const med = median(rr);
+    const mad = median(rr.map(v => Math.abs(v - med)));
+    const ok = med > 0.3 && med < 2 && mad / med < 0.15;
+    return { bpm: ok ? 60 / med : null, peaks, sigma, rr, med, mad };
+  }
+
+  const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+  const CHAR_UUID    = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+  const WINDOW_S = 8;
+  const N = FS * WINDOW_S;
+  const MIN_ANALYSIS_S = 4;
+
+  const rawBuf = new Float32Array(N), fltBuf = new Float32Array(N);
+  let filled = 0, total = 0, lastSeq = null, lost = 0, lastVal = 0;
+  let filt = new ECGFilter();
+  let lastBeatShown = -1, yLim = 300;
+  let rateCount = 0, rateT0 = performance.now(), rateVal = 0;
+  let currentEcgBpm = "";
+
+  function pushSample(mv) {
+    const mvInverted = 3300 - mv;
+    rawBuf.copyWithin(0, 1); rawBuf[N - 1] = mvInverted;
+    const y = filt.process(mvInverted);
+    fltBuf.copyWithin(0, 1); fltBuf[N - 1] = y;
+    if (filled < N) filled++;
+    total++; rateCount++; lastVal = mvInverted;
+
+    if (isRecording) {
+      recEcg.push({
+        raw: mvInverted,
+        flt: y,
+        bpm: currentEcgBpm
+      });
+    }
+  }
+
+  let recvPackets = 0;
+  function onData(ev) {
+    const dv = ev.target.value;
+    if (dv.byteLength < 4) return;
+    const seq = dv.getUint16(0, true);
+    const n = (dv.byteLength - 2) >> 1;
+    const first = dv.getUint16(2, true) / 10;
+    recvPackets++;
+
+    if (lastSeq !== null) {
+      const missed = (seq - lastSeq - 1) & 0xFFFF;
+      if (missed > 0 && missed < 50) {
+        lost += missed;
+        const gap = missed * n;
+        const v0 = lastVal;
+        for (let m = 1; m <= gap; m++) {
+          pushSample(v0 + (first - v0) * m / (gap + 1));
+        }
+      }
+    }
+    lastSeq = seq;
+    for (let i = 0; i < n; i++) {
+      pushSample(dv.getUint16(2 + 2 * i, true) / 10);
+    }
+  }
+
+  function setEcgStatus(text, kind) {
+    $("statusEcg").textContent = "ECG : " + text;
+    $("dotEcg").className = "dot" + (kind ? " " + kind : "");
+  }
+
+  let device = null, ch = null;
+  async function connect() {
+    try {
+      setEcgStatus('Recherche...', '');
+      device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true, optionalServices: [SERVICE_UUID]
+      });
+      device.addEventListener('gattserverdisconnected', () => {
+        ecgConnected = false;
+        setEcgStatus('Déconnecté', '');
+        $('btnConnectEcg').textContent = 'Connecter ECG';
+        updateRecButtonState();
+      });
+      setEcgStatus('Connexion...', '');
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      ch = await service.getCharacteristic(CHAR_UUID);
+      filt = new ECGFilter(); filled = 0; total = 0; lastSeq = null; lost = 0; recvPackets = 0;
+      lastBeatShown = -1; rawBuf.fill(0); fltBuf.fill(0);
+      ch.addEventListener('characteristicvaluechanged', onData);
+      await ch.startNotifications();
+      ecgConnected = true;
+      setEcgStatus('Connecté (' + (device.name || 'ESP32') + ')', 'on');
+      $('btnConnectEcg').textContent = 'Déconnecter ECG';
+      updateRecButtonState();
+    } catch (e) {
+      ecgConnected = false;
+      setEcgStatus(e.name === 'NotFoundError' ? 'Annulé' : 'Erreur : ' + e.message, '');
+      updateRecButtonState();
+    }
+  }
+
+  function disconnect() {
+    if (ch) { try { ch.removeEventListener('characteristicvaluechanged', onData); } catch (_) {} }
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    ecgConnected = false;
+    setEcgStatus('Déconnecté', '');
+    $('btnConnectEcg').textContent = 'Connecter ECG';
+    updateRecButtonState();
+  }
+
+  $('btnConnectEcg').addEventListener('click', () => {
+    if (!navigator.bluetooth) {
+      setEcgStatus('Web Bluetooth indisponible', '');
+      return;
+    }
+    if (ecgConnected) disconnect(); else connect();
+  });
+
+  function setupCanvas(c) {
+    const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    const g = c.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0);
+    return { g, w: r.width, h: r.height };
+  }
+
+  function drawTrace(canvas, buf, colorVar, lo, hi, peaks) {
+    const { g, w, h } = setupCanvas(canvas);
+    g.clearRect(0, 0, w, h);
+    const L = 54, R = 8, T = 6, B = 20, pw = w - L - R, ph = h - T - B;
+    const grid = css("--grid"), muted = css("--muted");
+    g.font = "11px system-ui, sans-serif";
+    g.lineWidth = 1;
+
+    g.textAlign = "right"; g.textBaseline = "middle";
+    for (let k = 0; k <= 4; k++) {
+      const y = Math.round(T + ph * k / 4) + .5;
+      const v = hi - (hi - lo) * k / 4;
+      g.strokeStyle = grid; g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke();
+      g.fillStyle = muted; g.fillText(v.toFixed(0), L - 6, y);
+    }
+
+    g.textAlign = "center"; g.textBaseline = "top";
+    for (let s = 0; s <= WINDOW_S; s++) {
+      const x = Math.round(L + pw * s / WINDOW_S) + .5;
+      g.strokeStyle = grid; g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
+      g.fillStyle = muted; g.fillText("-" + (WINDOW_S - s) + " s", Math.min(Math.max(x, L + 12), L + pw - 12), T + ph + 4);
+    }
+
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    g.strokeStyle = css(colorVar); g.lineWidth = 1.6; g.lineJoin = "round"; g.beginPath();
+    const start = N - filled;
+    for (let i = start; i < N; i++) {
+      const x = L + pw * i / (N - 1);
+      const y = T + (1 - (buf[i] - lo) / (hi - lo)) * ph;
+      if (i === start) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+
+    if (peaks) {
+      g.fillStyle = css("--ppg");
+      for (const p of peaks) {
+        const idx = p + (N - Math.min(filled, N));
+        const x = L + pw * idx / (N - 1);
+        const y = T + (1 - (buf[idx] - lo) / (hi - lo)) * ph;
+        g.beginPath(); g.arc(x, y, 3.5, 0, 6.2832); g.fill();
+      }
+    }
+    g.restore();
+  }
+
+  let lastAnalysis = { bpm: null, peaks: [] }, lastAnalysisT = 0;
+  function analyse() {
+    const settle = 2 * FS;
+    const usable = filled - settle;
+    if (usable < MIN_ANALYSIS_S * FS) { lastAnalysis = { bpm: null, peaks: [] }; return; }
+    const seg = fltBuf.subarray(N - usable);
+    const r = detectBeats(seg);
+    lastAnalysis = { ...r, offset: N - usable };
+  }
+
+  function frame(t) {
+    requestAnimationFrame(frame);
+    if (t - lastAnalysisT > 500) { lastAnalysisT = t; analyse(); updateReadouts(t); }
+
+    const recent = fltBuf.subarray(N - Math.min(filled, N));
+    if (recent.length > FS) {
+      const a = Array.from(recent, Math.abs).sort((p, q) => p - q);
+      const target = Math.max(50, a[Math.floor(a.length * 0.995)] * 1.3);
+      yLim += (target - yLim) * 0.05;
+    }
+    const peaks = (lastAnalysis.peaks || []).map(p => p + (lastAnalysis.offset || 0) - (N - Math.min(filled, N)));
+    drawTrace($('cvF'), fltBuf, '--ecg-flt', -yLim, yLim, peaks);
+
+    const rr = rawBuf.subarray(N - Math.min(filled, N));
+    let mn = 1e9, mx = -1e9;
+    for (const v of rr) { if (v < mn) mn = v; if (v > mx) mx = v; }
+    if (!(mx > mn)) { mn = 0; mx = 3300; }
+    const m = (mx - mn) * 0.1 + 20;
+    drawTrace($('cvR'), rawBuf, '--ecg-raw', mn - m, mx + m, null);
+  }
+
+  function updateReadouts(t) {
+    const a = lastAnalysis;
+    const lossy = lost > 0 && lost / (lost + recvPackets) > 0.05;
+    if (a.bpm && !lossy) {
+      currentEcgBpm = Math.round(a.bpm);
+      $('bpmEcg').textContent = currentEcgBpm;
+    } else {
+      currentEcgBpm = "";
+      $('bpmEcg').textContent = '--';
+    }
+    $('rr').textContent = a.bpm ? (a.med * 1000).toFixed(0) + ' ms' : '--';
+    $('nq').textContent = a.peaks && a.peaks.length ? a.peaks.length : '--';
+    if (a.peaks && a.peaks.length) {
+      const seg = fltBuf.subarray(a.offset);
+      const amps = a.peaks.map(p => Math.abs(seg[p]));
+      $('amp').textContent = median(amps).toFixed(0) + ' mV';
+    } else $('amp').textContent = '--';
+    $('lost').textContent = lost;
+    const dt = (t - rateT0) / 1000;
+    if (dt > 2) { rateVal = rateCount / dt; rateCount = 0; rateT0 = t; }
+    $('rateEcg').textContent = rateVal ? rateVal.toFixed(0) + ' Hz' : '--';
+    const msg = $('msgEcg');
+    if (filled < (MIN_ANALYSIS_S + 2) * FS) msg.textContent = filled ? 'Stabilisation du filtre...' : "Le rythme s'affiche après ~5 s de signal propre.";
+    else if (lost > 0 && lost / (lost + recvPackets) > 0.02) msg.textContent = 'Paquets perdus : rapprocher l\'ESP32.';
+    else if (!a.bpm) msg.textContent = 'Pas de rythme fiable : vérifier les électrodes.';
+    else msg.textContent = 'Signal ECG détecté.';
+    if (a.bpm && a.peaks.length) {
+      const lastIdx = a.peaks[a.peaks.length - 1] + a.offset;
+      const age = (N - lastIdx) / FS;
+      if (age < 0.8 && lastIdx !== lastBeatShown) {
+        lastBeatShown = lastIdx;
+        $('heart').classList.add('beat'); setTimeout(() => $('heart').classList.remove('beat'), 120);
+      }
+    }
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
